@@ -262,6 +262,7 @@ int wmain(const int argumentCount, wchar_t* arguments[])
         return EXIT_FAILURE;
     }
 
+
     diskbackuper::phase0::FileBlockSource source(arguments[1]);
     std::error_code error;
     if (!source.Open(error))
