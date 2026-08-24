@@ -14,6 +14,7 @@ namespace diskbackuper::phase0
         std::uint64_t sourceSize = 0;
         std::uint64_t segmentSize = 32ULL * 1024ULL * 1024ULL;
         std::size_t bytesPerSector = 512;
+        bool streamedMediaSize = false;
     };
 
     class EwfWriter final
@@ -29,6 +30,12 @@ namespace diskbackuper::phase0
 
         bool Open(const EwfWriterOptions& options, std::error_code& error);
         bool OpenResume(const EwfWriterOptions& options, std::error_code& error);
+        bool ReadExisting(
+            std::uint64_t offset,
+            std::byte* buffer,
+            std::size_t size,
+            std::size_t& bytesRead,
+            std::error_code& error);
         bool Write(const std::byte* data, std::size_t size, std::error_code& error);
         bool Finalize(std::error_code& error);
         bool FinalizePartial(std::error_code& error);

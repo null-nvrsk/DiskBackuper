@@ -164,7 +164,7 @@ namespace diskbackuper::phase0
 
         if (libewf_handle_set_media_size(
                 handle,
-                options_.sourceSize,
+                options_.streamedMediaSize ? 0 : options_.sourceSize,
                 &libewfError) != 1)
         {
             return setFailure("libewf_handle_set_media_size");
@@ -294,7 +294,7 @@ namespace diskbackuper::phase0
             handle,
             filenames,
             numberOfFilenames,
-            LIBEWF_OPEN_WRITE_RESUME,
+            LIBEWF_OPEN_WRITE_RESUME | LIBEWF_OPEN_READ,
             &libewfError);
         libewf_glob_wide_free(filenames, numberOfFilenames, nullptr);
 
@@ -370,6 +370,58 @@ namespace diskbackuper::phase0
         handle_ = reinterpret_cast<std::intptr_t*>(handle);
         isOpen_ = true;
         isResume_ = true;
+        return true;
+    }
+
+    bool EwfWriter::ReadExisting(
+        const std::uint64_t offset,
+        std::byte* const buffer,
+        const std::size_t size,
+        std::size_t& bytesRead,
+        std::error_code& error)
+    {
+        bytesRead = 0;
+        error.clear();
+        lastErrorMessage_.clear();
+
+        if (!isOpen_ || handle_ == nullptr || !isResume_)
+        {
+            lastErrorMessage_ = "The EWF checkpoint is not open for resume";
+            error = std::make_error_code(std::errc::bad_file_descriptor);
+            return false;
+        }
+        if ((buffer == nullptr && size != 0) ||
+            offset > bytesWritten_ ||
+            size > bytesWritten_ - offset ||
+            offset > static_cast<std::uint64_t>(std::numeric_limits<off64_t>::max()))
+        {
+            lastErrorMessage_ = "The EWF checkpoint read is outside the safe prefix";
+            error = std::make_error_code(std::errc::invalid_argument);
+            return false;
+        }
+        if (size == 0)
+        {
+            return true;
+        }
+
+        libewf_error_t* libewfError = nullptr;
+        const ssize_t readCount = libewf_handle_read_random(
+            reinterpret_cast<libewf_handle_t*>(handle_),
+            buffer,
+            size,
+            static_cast<off64_t>(offset),
+            &libewfError);
+        if (readCount < 0)
+        {
+            SetLibewfFailure(
+                lastErrorMessage_,
+                "libewf_handle_read_random(checkpoint)",
+                &libewfError,
+                error);
+            return false;
+        }
+
+        bytesRead = static_cast<std::size_t>(readCount);
         return true;
     }
 

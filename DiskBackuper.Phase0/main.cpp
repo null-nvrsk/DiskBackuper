@@ -182,7 +182,8 @@ namespace
         const bool resume,
         diskbackuper::phase0::BlockSource* const providedSource = nullptr,
         const std::size_t sourceBytesPerSector = 512,
-        const std::wstring_view resumeCommandOverride = {})
+        const std::wstring_view resumeCommandOverride = {},
+        const bool survivablePartial = false)
     {
         if ((!resume && (argumentCount < 4 || argumentCount > 6)) ||
             (resume && argumentCount != 4))
@@ -251,6 +252,7 @@ namespace
         writerOptions.sourceSize = source->Size();
         writerOptions.segmentSize = segmentSizeMiB * BytesPerMiB;
         writerOptions.bytesPerSector = sourceBytesPerSector;
+        writerOptions.streamedMediaSize = survivablePartial;
 
         diskbackuper::phase0::EwfWriter writer;
         const bool writerOpened = resume
@@ -357,9 +359,17 @@ namespace
             writer.Close();
             source->Close();
             PrintError("Acquire source", sourceError);
-            std::wcout << L"The partial E01 was preserved after source loss.\n";
+            std::wcout
+                << (survivablePartial
+                    ? L"A readable truncated E01 was finalized after source loss.\n"
+                    : L"The partial E01 checkpoint was preserved after source loss.\n");
             std::wcout << L"Resume offset: " << pauseOffset << L" bytes\n";
-            if (!resumeCommandOverride.empty())
+            if (survivablePartial)
+            {
+                std::wcout
+                    << L"The image contains only the captured prefix and is not resumable.\n";
+            }
+            else if (!resumeCommandOverride.empty())
             {
                 std::wcout << L"Reconnect the same device, then continue with: "
                            << resumeCommandOverride << L'\n';
@@ -388,9 +398,17 @@ namespace
 
             writer.Close();
             source->Close();
-            std::wcout << L"E01 acquisition paused safely.\n";
+            std::wcout
+                << (survivablePartial
+                    ? L"Readable truncated E01 finalized safely.\n"
+                    : L"E01 acquisition paused safely.\n");
             std::wcout << L"Resume offset: " << pauseOffset << L" bytes\n";
-            if (!resumeCommandOverride.empty())
+            if (survivablePartial)
+            {
+                std::wcout
+                    << L"The image contains only the captured prefix and is not resumable.\n";
+            }
+            else if (!resumeCommandOverride.empty())
             {
                 std::wcout << L"Continue with: " << resumeCommandOverride << L'\n';
             }
@@ -439,6 +457,18 @@ namespace
     int ResumeE01(const int argumentCount, wchar_t* arguments[])
     {
         return AcquireE01(argumentCount, arguments, true);
+    }
+
+    int CreateSurvivableE01(const int argumentCount, wchar_t* arguments[])
+    {
+        return AcquireE01(
+            argumentCount,
+            arguments,
+            false,
+            nullptr,
+            512,
+            {},
+            true);
     }
 
     bool ValidateUsbDevice(
@@ -693,7 +723,8 @@ namespace
     int AcquirePhysicalDeviceE01(
         const int argumentCount,
         wchar_t* arguments[],
-        const bool resume)
+        const bool resume,
+        const bool survivablePartial = false)
     {
         if ((!resume && (argumentCount < 5 || argumentCount > 7)) ||
             (resume && argumentCount != 5))
@@ -702,6 +733,10 @@ namespace
                 << (resume
                     ? L"Usage: DiskBackuper.Phase0.exe --resume-device-e01 "
                       L"<device-path> <expected-size-bytes> <output-base>\n"
+                    : survivablePartial
+                    ? L"Usage: DiskBackuper.Phase0.exe --create-survivable-device-e01 "
+                      L"<device-path> <expected-size-bytes> <output-base> "
+                      L"[segment-mib] [stop-after-mib]\n"
                     : L"Usage: DiskBackuper.Phase0.exe --create-device-e01 "
                       L"<device-path> <expected-size-bytes> <output-base> "
                       L"[segment-mib] [stop-after-mib]\n");
@@ -747,7 +782,8 @@ namespace
             resume,
             &source,
             source.BytesPerSector(),
-            resumeCommand);
+            resumeCommand,
+            survivablePartial);
     }
 
     int CreateFileSystemTestImage(const int argumentCount, wchar_t* arguments[])
@@ -795,6 +831,108 @@ namespace
         std::wcout << L"Files:            " << layout.fileCount << L'\n';
         return EXIT_SUCCESS;
     }
+
+    int SalvagePartialE01(const int argumentCount, wchar_t* arguments[])
+    {
+        if (argumentCount != 5)
+        {
+            std::wcout
+                << L"Usage: DiskBackuper.Phase0.exe --salvage-partial-e01 "
+                << L"<checkpoint-base> <expected-original-size> "
+                << L"<readable-output-base>\n";
+            return EXIT_FAILURE;
+        }
+
+        std::uint64_t expectedOriginalSize = 0;
+        if (!TryParseOffset(arguments[3], expectedOriginalSize) ||
+            expectedOriginalSize == 0)
+        {
+            std::cerr << "Invalid expected original media size.\n";
+            return EXIT_FAILURE;
+        }
+
+        std::error_code error;
+        diskbackuper::phase0::EwfWriterOptions checkpointOptions;
+        checkpointOptions.outputBasePath = arguments[2];
+        checkpointOptions.sourceSize = expectedOriginalSize;
+        checkpointOptions.bytesPerSector = 512;
+
+        diskbackuper::phase0::EwfWriter checkpoint;
+        if (!checkpoint.OpenResume(checkpointOptions, error))
+        {
+            PrintError("Open partial E01 checkpoint", error);
+            std::cerr << checkpoint.LastErrorMessage() << '\n';
+            return EXIT_FAILURE;
+        }
+
+        const std::uint64_t safeSize = checkpoint.BytesWritten();
+        if (safeSize == 0 || safeSize % checkpointOptions.bytesPerSector != 0)
+        {
+            std::cerr << "The checkpoint has no sector-aligned safe prefix.\n";
+            return EXIT_FAILURE;
+        }
+
+        diskbackuper::phase0::EwfWriterOptions readableOptions;
+        readableOptions.outputBasePath = arguments[4];
+        readableOptions.sourceSize = safeSize;
+        readableOptions.segmentSize = checkpoint.SegmentSize();
+        readableOptions.bytesPerSector = checkpointOptions.bytesPerSector;
+
+        diskbackuper::phase0::EwfWriter readable;
+        if (!readable.Open(readableOptions, error))
+        {
+            PrintError("Open readable partial E01", error);
+            std::cerr << readable.LastErrorMessage() << '\n';
+            return EXIT_FAILURE;
+        }
+
+        constexpr std::size_t CopyBufferSize = 8ULL * BytesPerMiB;
+        std::vector<std::byte> buffer(CopyBufferSize);
+        std::uint64_t offset = 0;
+        while (offset < safeSize)
+        {
+            const std::size_t requested = static_cast<std::size_t>(
+                std::min<std::uint64_t>(buffer.size(), safeSize - offset));
+            std::size_t bytesRead = 0;
+            if (!checkpoint.ReadExisting(
+                    offset,
+                    buffer.data(),
+                    requested,
+                    bytesRead,
+                    error) ||
+                bytesRead != requested)
+            {
+                PrintError("Read E01 checkpoint", error);
+                std::cerr << checkpoint.LastErrorMessage() << '\n';
+                return EXIT_FAILURE;
+            }
+            if (!readable.Write(buffer.data(), bytesRead, error))
+            {
+                PrintError("Write readable partial E01", error);
+                std::cerr << readable.LastErrorMessage() << '\n';
+                return EXIT_FAILURE;
+            }
+            offset += bytesRead;
+            std::wcout
+                << L"\rSalvaged: " << offset / BytesPerMiB << L" / "
+                << safeSize / BytesPerMiB << L" MiB   " << std::flush;
+        }
+        std::wcout << L'\n';
+
+        if (!readable.Finalize(error))
+        {
+            PrintError("Finalize readable partial E01", error);
+            std::cerr << readable.LastErrorMessage() << '\n';
+            return EXIT_FAILURE;
+        }
+
+        readable.Close();
+        checkpoint.Close();
+        std::wcout << L"Readable partial E01 created successfully.\n";
+        std::wcout << L"Safe media size: " << safeSize << L" bytes\n";
+        std::wcout << L"Output base:     " << arguments[4] << L'\n';
+        return EXIT_SUCCESS;
+    }
 }
 
 int wmain(const int argumentCount, wchar_t* arguments[])
@@ -821,6 +959,12 @@ int wmain(const int argumentCount, wchar_t* arguments[])
     }
 
     if (argumentCount >= 2 &&
+        std::wcscmp(arguments[1], L"--create-survivable-e01") == 0)
+    {
+        return CreateSurvivableE01(argumentCount, arguments);
+    }
+
+    if (argumentCount >= 2 &&
         std::wcscmp(arguments[1], L"--probe-device") == 0)
     {
         return ProbePhysicalDevice(argumentCount, arguments);
@@ -839,6 +983,16 @@ int wmain(const int argumentCount, wchar_t* arguments[])
     }
 
     if (argumentCount >= 2 &&
+        std::wcscmp(arguments[1], L"--create-survivable-device-e01") == 0)
+    {
+        return AcquirePhysicalDeviceE01(
+            argumentCount,
+            arguments,
+            false,
+            true);
+    }
+
+    if (argumentCount >= 2 &&
         std::wcscmp(arguments[1], L"--resume-device-e01") == 0)
     {
         return AcquirePhysicalDeviceE01(argumentCount, arguments, true);
@@ -848,6 +1002,12 @@ int wmain(const int argumentCount, wchar_t* arguments[])
         std::wcscmp(arguments[1], L"--create-fs-test-image") == 0)
     {
         return CreateFileSystemTestImage(argumentCount, arguments);
+    }
+
+    if (argumentCount >= 2 &&
+        std::wcscmp(arguments[1], L"--salvage-partial-e01") == 0)
+    {
+        return SalvagePartialE01(argumentCount, arguments);
     }
 
     if (argumentCount < 2 || argumentCount > 3)
@@ -864,6 +1024,10 @@ int wmain(const int argumentCount, wchar_t* arguments[])
             << L"       DiskBackuper.Phase0.exe --resume-e01 "
             << L"<source-file> <output-base>\n";
         std::wcout
+            << L"       DiskBackuper.Phase0.exe --create-survivable-e01 "
+            << L"<source-file> <output-base> "
+            << L"[segment-mib] [stop-after-mib]\n";
+        std::wcout
             << L"       DiskBackuper.Phase0.exe --probe-device "
             << L"<device-path> <expected-size-bytes>\n";
         std::wcout
@@ -874,11 +1038,19 @@ int wmain(const int argumentCount, wchar_t* arguments[])
             << L"<device-path> <expected-size-bytes> <output-base> "
             << L"[segment-mib] [stop-after-mib]\n";
         std::wcout
+            << L"       DiskBackuper.Phase0.exe --create-survivable-device-e01 "
+            << L"<device-path> <expected-size-bytes> <output-base> "
+            << L"[segment-mib] [stop-after-mib]\n";
+        std::wcout
             << L"       DiskBackuper.Phase0.exe --resume-device-e01 "
             << L"<device-path> <expected-size-bytes> <output-base>\n";
         std::wcout
             << L"       DiskBackuper.Phase0.exe --create-fs-test-image "
             << L"<output-file> [size-mib]\n";
+        std::wcout
+            << L"       DiskBackuper.Phase0.exe --salvage-partial-e01 "
+            << L"<checkpoint-base> <expected-original-size> "
+            << L"<readable-output-base>\n";
         return argumentCount < 2 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
