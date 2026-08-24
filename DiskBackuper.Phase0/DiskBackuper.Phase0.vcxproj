@@ -147,6 +147,7 @@ copy /Y "$(LibewfBinaryDir)\zlib.dll" "$(OutDir)zlib.dll"</Command>
   <ItemGroup>
     <ClCompile Include="AcquisitionPrototype.cpp" />
     <ClCompile Include="EwfWriter.cpp" />
+    <ClCompile Include="Fat32TestImageGenerator.cpp" />
     <ClCompile Include="FileBlockSource.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="TestDataGenerator.cpp" />
@@ -156,6 +157,7 @@ copy /Y "$(LibewfBinaryDir)\zlib.dll" "$(OutDir)zlib.dll"</Command>
     <ClInclude Include="AcquisitionPrototype.h" />
     <ClInclude Include="BlockSource.h" />
     <ClInclude Include="EwfWriter.h" />
+    <ClInclude Include="Fat32TestImageGenerator.h" />
     <ClInclude Include="FileBlockSource.h" />
     <ClInclude Include="TestDataGenerator.h" />
     <ClInclude Include="Win32DeviceSource.h" />

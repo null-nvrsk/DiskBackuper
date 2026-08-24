@@ -161,4 +161,18 @@ if ($LASTEXITCODE -ne 0)
     throw "libewf build failed."
 }
 
-Write-Host "libewf with E01 write support is ready in .deps\libewf-legacy\vs2022\Release\x64"
+& $msbuild.FullName $solutionPath `
+    /m:1 `
+    /nr:false `
+    /t:ewfverify `
+    /p:Configuration=Release `
+    /p:Platform=x64 `
+    /p:PlatformToolset=v143 `
+    /nologo
+
+if ($LASTEXITCODE -ne 0)
+{
+    throw "ewfverify build failed."
+}
+
+Write-Host "libewf and ewfverify are ready in .deps\libewf-legacy\vs2022\Release\x64"

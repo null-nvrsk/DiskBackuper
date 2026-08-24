@@ -28,13 +28,18 @@ namespace diskbackuper::phase0
         EwfWriter& operator=(EwfWriter&&) = delete;
 
         bool Open(const EwfWriterOptions& options, std::error_code& error);
+        bool OpenResume(const EwfWriterOptions& options, std::error_code& error);
         bool Write(const std::byte* data, std::size_t size, std::error_code& error);
         bool Finalize(std::error_code& error);
+        bool FinalizePartial(std::error_code& error);
         void Close() noexcept;
 
         [[nodiscard]] bool IsOpen() const noexcept;
         [[nodiscard]] std::wstring_view OutputBasePath() const noexcept;
         [[nodiscard]] std::string_view LastErrorMessage() const noexcept;
+        [[nodiscard]] std::uint64_t BytesWritten() const noexcept;
+        [[nodiscard]] std::uint64_t SegmentSize() const noexcept;
+        [[nodiscard]] bool IsResume() const noexcept;
 
     private:
         EwfWriterOptions options_;
@@ -43,5 +48,6 @@ namespace diskbackuper::phase0
         std::string lastErrorMessage_;
         bool isOpen_ = false;
         bool isFinalized_ = false;
+        bool isResume_ = false;
     };
 }

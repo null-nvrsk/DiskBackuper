@@ -2,6 +2,7 @@
 
 #include "BlockSource.h"
 
+#include <cstdint>
 #include <string>
 
 namespace diskbackuper::phase0
@@ -18,6 +19,11 @@ namespace diskbackuper::phase0
         [[nodiscard]] bool IsOpen() const noexcept override;
         [[nodiscard]] std::uint64_t Size() const noexcept override;
         [[nodiscard]] std::wstring_view DisplayName() const noexcept override;
+        [[nodiscard]] std::uint32_t BytesPerSector() const noexcept;
+        [[nodiscard]] std::uint32_t DeviceNumber() const noexcept;
+        [[nodiscard]] bool IsUsb() const noexcept;
+        [[nodiscard]] bool IsRemovable() const noexcept;
+        [[nodiscard]] bool IsSystemDisk() const noexcept;
 
         bool Read(
             std::uint64_t offset,
@@ -28,7 +34,13 @@ namespace diskbackuper::phase0
 
     private:
         std::wstring devicePath_;
+        void* nativeHandle_ = nullptr;
         std::uint64_t size_ = 0;
+        std::uint32_t bytesPerSector_ = 0;
+        std::uint32_t deviceNumber_ = 0;
+        bool isUsb_ = false;
+        bool isRemovable_ = false;
+        bool isSystemDisk_ = false;
         bool isOpen_ = false;
     };
 }

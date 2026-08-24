@@ -75,6 +75,7 @@ namespace diskbackuper::phase0
         options_ = options;
         bytesWritten_ = 0;
         isFinalized_ = false;
+        isResume_ = false;
         lastErrorMessage_.clear();
         error.clear();
 
@@ -223,6 +224,155 @@ namespace diskbackuper::phase0
         return true;
     }
 
+    bool EwfWriter::OpenResume(
+        const EwfWriterOptions& options,
+        std::error_code& error)
+    {
+        Close();
+        options_ = options;
+        bytesWritten_ = 0;
+        isFinalized_ = false;
+        isResume_ = false;
+        lastErrorMessage_.clear();
+        error.clear();
+
+        if (options_.outputBasePath.empty() ||
+            options_.sourceSize == 0 ||
+            options_.bytesPerSector == 0 ||
+            options_.bytesPerSector > std::numeric_limits<std::uint32_t>::max())
+        {
+            lastErrorMessage_ = "Invalid EWF resume options";
+            error = std::make_error_code(std::errc::invalid_argument);
+            return false;
+        }
+
+        const std::wstring firstSegmentPath = options_.outputBasePath + L".E01";
+        const DWORD fileAttributes = GetFileAttributesW(firstSegmentPath.c_str());
+        if (fileAttributes == INVALID_FILE_ATTRIBUTES)
+        {
+            const DWORD attributesError = GetLastError();
+            lastErrorMessage_ = "The first E01 segment does not exist";
+            error = {
+                static_cast<int>(attributesError),
+                std::system_category()
+            };
+            return false;
+        }
+
+        libewf_handle_t* handle = nullptr;
+        libewf_error_t* libewfError = nullptr;
+        if (libewf_handle_initialize(&handle, &libewfError) != 1)
+        {
+            SetLibewfFailure(
+                lastErrorMessage_,
+                "libewf_handle_initialize",
+                &libewfError,
+                error);
+            return false;
+        }
+
+        wchar_t** filenames = nullptr;
+        int numberOfFilenames = 0;
+        if (libewf_glob_wide(
+                firstSegmentPath.c_str(),
+                firstSegmentPath.size(),
+                LIBEWF_FORMAT_UNKNOWN,
+                &filenames,
+                &numberOfFilenames,
+                &libewfError) != 1)
+        {
+            SetLibewfFailure(
+                lastErrorMessage_,
+                "libewf_glob_wide",
+                &libewfError,
+                error);
+            CloseAndFree(handle);
+            return false;
+        }
+
+        const int openResult = libewf_handle_open_wide(
+            handle,
+            filenames,
+            numberOfFilenames,
+            LIBEWF_OPEN_WRITE_RESUME,
+            &libewfError);
+        libewf_glob_wide_free(filenames, numberOfFilenames, nullptr);
+
+        if (openResult != 1)
+        {
+            SetLibewfFailure(
+                lastErrorMessage_,
+                "libewf_handle_open_wide(resume)",
+                &libewfError,
+                error);
+            CloseAndFree(handle);
+            return false;
+        }
+
+        const auto getFailure = [&](const char* const operation)
+        {
+            SetLibewfFailure(
+                lastErrorMessage_,
+                operation,
+                &libewfError,
+                error);
+            CloseAndFree(handle);
+            return false;
+        };
+
+        size64_t storedMediaSize = 0;
+        size64_t storedSegmentSize = 0;
+        std::uint32_t storedBytesPerSector = 0;
+        off64_t storedOffset = 0;
+        if (libewf_handle_get_media_size(
+                handle,
+                &storedMediaSize,
+                &libewfError) != 1)
+        {
+            return getFailure("libewf_handle_get_media_size");
+        }
+        if (libewf_handle_get_bytes_per_sector(
+                handle,
+                &storedBytesPerSector,
+                &libewfError) != 1)
+        {
+            return getFailure("libewf_handle_get_bytes_per_sector");
+        }
+        if (libewf_handle_get_maximum_segment_size(
+                handle,
+                &storedSegmentSize,
+                &libewfError) != 1)
+        {
+            return getFailure("libewf_handle_get_maximum_segment_size");
+        }
+        if (libewf_handle_get_offset(
+                handle,
+                &storedOffset,
+                &libewfError) != 1)
+        {
+            return getFailure("libewf_handle_get_offset");
+        }
+
+        if (storedMediaSize != options_.sourceSize ||
+            storedBytesPerSector != options_.bytesPerSector ||
+            storedOffset < 0 ||
+            static_cast<std::uint64_t>(storedOffset) > options_.sourceSize)
+        {
+            lastErrorMessage_ =
+                "The source size or sector size does not match the existing E01 image";
+            error = std::make_error_code(std::errc::invalid_argument);
+            CloseAndFree(handle);
+            return false;
+        }
+
+        options_.segmentSize = storedSegmentSize;
+        bytesWritten_ = static_cast<std::uint64_t>(storedOffset);
+        handle_ = reinterpret_cast<std::intptr_t*>(handle);
+        isOpen_ = true;
+        isResume_ = true;
+        return true;
+    }
+
     bool EwfWriter::Write(
         const std::byte* const data,
         const std::size_t size,
@@ -322,6 +472,40 @@ namespace diskbackuper::phase0
         return true;
     }
 
+    bool EwfWriter::FinalizePartial(std::error_code& error)
+    {
+        error.clear();
+        lastErrorMessage_.clear();
+
+        if (!isOpen_ || handle_ == nullptr)
+        {
+            lastErrorMessage_ = "The EWF writer is not open";
+            error = std::make_error_code(std::errc::bad_file_descriptor);
+            return false;
+        }
+
+        if (isFinalized_)
+        {
+            return true;
+        }
+
+        libewf_error_t* libewfError = nullptr;
+        if (libewf_handle_write_finalize(
+                reinterpret_cast<libewf_handle_t*>(handle_),
+                &libewfError) < 0)
+        {
+            SetLibewfFailure(
+                lastErrorMessage_,
+                "libewf_handle_write_finalize(partial)",
+                &libewfError,
+                error);
+            return false;
+        }
+
+        isFinalized_ = true;
+        return true;
+    }
+
     void EwfWriter::Close() noexcept
     {
         if (handle_ != nullptr)
@@ -334,6 +518,7 @@ namespace diskbackuper::phase0
 
         isOpen_ = false;
         isFinalized_ = false;
+        isResume_ = false;
         bytesWritten_ = 0;
     }
 
@@ -350,5 +535,20 @@ namespace diskbackuper::phase0
     std::string_view EwfWriter::LastErrorMessage() const noexcept
     {
         return lastErrorMessage_;
+    }
+
+    std::uint64_t EwfWriter::BytesWritten() const noexcept
+    {
+        return bytesWritten_;
+    }
+
+    std::uint64_t EwfWriter::SegmentSize() const noexcept
+    {
+        return options_.segmentSize;
+    }
+
+    bool EwfWriter::IsResume() const noexcept
+    {
+        return isResume_;
     }
 }
