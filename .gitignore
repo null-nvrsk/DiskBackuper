@@ -1,0 +1,87 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build directories
+[Dd]ebug/
+[Rr]elease/
+[Rr]elWithDebInfo/
+[Mm]inSizeRel/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+out/
+build/
+cmake-build-*/
+
+# C/C++ build artifacts
+*.obj
+*.o
+*.iobj
+*.ipdb
+*.pch
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.lastbuildstate
+*.recipe
+*.exp
+*.lib
+*.dll
+*.exe
+
+# Visual C++ generated files
+ipch/
+*.VC.db
+*.VC.VC.opendb
+*.opensdf
+*.sdf
+*.opendb
+*.aps
+*.ncb
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+
+# Package managers
+packages/
+*.nupkg
+vcpkg_installed/
+.deps/
+
+# Tests and profiling
+TestResults/
+*.coverage
+*.coveragexml
+*.vsp
+*.vspx
+
+# Phase 0 generated data and EWF images
+/test-data/
+/test-output/
+*.E[0-9][0-9]
+*.E[A-Z][A-Z]
+*.e[0-9][0-9]
+*.e[a-z][a-z]
+
+# Temporary and backup files
+*.tmp
+*.temp
+*.bak
+*.orig
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
