@@ -30,6 +30,9 @@
     <ClCompile Include="EwfWriter.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
+    <ClCompile Include="EwfBlockSource.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
     <ClCompile Include="TestDataGenerator.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
@@ -48,6 +51,9 @@
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
     <ClInclude Include="EwfWriter.h">
+      <Filter>Файлы заголовков</Filter>
+    </ClInclude>
+    <ClInclude Include="EwfBlockSource.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
     <ClInclude Include="AcquisitionPrototype.h">

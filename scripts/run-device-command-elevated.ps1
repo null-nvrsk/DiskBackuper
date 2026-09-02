@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("probe", "hash", "create", "resume")]
+    [ValidateSet("probe", "hash", "compare", "create", "survivable", "resume")]
     [string]$Mode,
 
     [Parameter(Mandatory)]
@@ -11,6 +11,7 @@ param(
     [UInt64]$ExpectedSize,
 
     [string]$OutputBase = "",
+    [string]$ImagePath = "",
     [UInt64]$SegmentMiB = 512,
     [Parameter(Mandatory)]
     [string]$LogPath
@@ -50,6 +51,23 @@ $commandArguments = switch ($Mode)
     "hash" {
         @("--hash-device", $DevicePath, $ExpectedSize.ToString())
     }
+    "compare" {
+        if ([string]::IsNullOrWhiteSpace($ImagePath))
+        {
+            throw "ImagePath is required for compare mode."
+        }
+        $resolvedImagePath = [IO.Path]::GetFullPath($ImagePath)
+        if ([IO.Path]::GetDirectoryName($resolvedImagePath) -ne $allowedLogDirectory)
+        {
+            throw "ImagePath must be stored directly in $allowedLogDirectory"
+        }
+        @(
+            "--compare-device-e01",
+            $DevicePath,
+            $ExpectedSize.ToString(),
+            $resolvedImagePath
+        )
+    }
     "create" {
         if ([string]::IsNullOrWhiteSpace($OutputBase))
         {
@@ -62,6 +80,24 @@ $commandArguments = switch ($Mode)
         }
         @(
             "--create-device-e01",
+            $DevicePath,
+            $ExpectedSize.ToString(),
+            $OutputBase,
+            $SegmentMiB.ToString()
+        )
+    }
+    "survivable" {
+        if ([string]::IsNullOrWhiteSpace($OutputBase))
+        {
+            throw "OutputBase is required for survivable mode."
+        }
+        $resolvedOutputBase = [IO.Path]::GetFullPath($OutputBase)
+        if ([IO.Path]::GetDirectoryName($resolvedOutputBase) -ne $allowedLogDirectory)
+        {
+            throw "OutputBase must be stored directly in $allowedLogDirectory"
+        }
+        @(
+            "--create-survivable-device-e01",
             $DevicePath,
             $ExpectedSize.ToString(),
             $OutputBase,

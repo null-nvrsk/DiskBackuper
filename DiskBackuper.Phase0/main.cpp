@@ -1,5 +1,6 @@
 #include "AcquisitionPrototype.h"
 #include "EwfWriter.h"
+#include "EwfBlockSource.h"
 #include "Fat32TestImageGenerator.h"
 #include "FileBlockSource.h"
 #include "TestDataGenerator.h"
@@ -720,6 +721,156 @@ namespace
         return EXIT_SUCCESS;
     }
 
+    int ComparePhysicalDeviceWithE01(
+        const int argumentCount,
+        wchar_t* arguments[])
+    {
+        if (argumentCount != 5)
+        {
+            std::wcout
+                << L"Usage: DiskBackuper.Phase0.exe --compare-device-e01 "
+                << L"<device-path> <expected-size-bytes> <first-e01-segment>\n";
+            return EXIT_FAILURE;
+        }
+
+        std::uint64_t expectedSize = 0;
+        if (!TryParseOffset(arguments[3], expectedSize) || expectedSize == 0)
+        {
+            std::cerr << "Invalid expected device size.\n";
+            return EXIT_FAILURE;
+        }
+
+        std::error_code error;
+        diskbackuper::phase0::Win32DeviceSource device(arguments[2]);
+        if (!device.Open(error))
+        {
+            PrintError("Open physical device", error);
+            return EXIT_FAILURE;
+        }
+        if (!ValidateUsbDevice(device, expectedSize))
+        {
+            return EXIT_FAILURE;
+        }
+
+        diskbackuper::phase0::EwfBlockSource image(arguments[4]);
+        if (!image.Open(error))
+        {
+            PrintError("Open E01 image", error);
+            return EXIT_FAILURE;
+        }
+        if (image.Size() != device.Size())
+        {
+            std::cerr
+                << "Image size mismatch. Device: " << device.Size()
+                << " bytes, E01: " << image.Size() << " bytes.\n";
+            return EXIT_FAILURE;
+        }
+
+        constexpr std::size_t CompareBufferSize = 8ULL * BytesPerMiB;
+        const std::size_t sectorSize = device.BytesPerSector();
+        std::vector<std::byte> deviceBuffer(CompareBufferSize);
+        std::vector<std::byte> imageBuffer(CompareBufferSize);
+        std::uint64_t offset = 0;
+        std::uint64_t differentBytes = 0;
+        std::uint64_t differentSectors = 0;
+        std::uint64_t mismatchRanges = 0;
+        std::uint64_t firstDifferentOffset =
+            std::numeric_limits<std::uint64_t>::max();
+        bool previousSectorDifferent = false;
+        std::uint64_t nextProgressMiB = 256;
+
+        while (offset < device.Size())
+        {
+            const std::size_t requested = static_cast<std::size_t>(
+                std::min<std::uint64_t>(
+                    CompareBufferSize,
+                    device.Size() - offset));
+            std::size_t deviceBytesRead = 0;
+            std::size_t imageBytesRead = 0;
+            if (!device.Read(
+                    offset,
+                    deviceBuffer.data(),
+                    requested,
+                    deviceBytesRead,
+                    error) ||
+                deviceBytesRead != requested)
+            {
+                PrintError("Read physical device for comparison", error);
+                return EXIT_FAILURE;
+            }
+            if (!image.Read(
+                    offset,
+                    imageBuffer.data(),
+                    requested,
+                    imageBytesRead,
+                    error) ||
+                imageBytesRead != requested)
+            {
+                PrintError("Read E01 for comparison", error);
+                return EXIT_FAILURE;
+            }
+
+            for (std::size_t sectorOffset = 0;
+                 sectorOffset < requested;
+                 sectorOffset += sectorSize)
+            {
+                const std::size_t bytesInSector = std::min(
+                    sectorSize,
+                    requested - sectorOffset);
+                const bool sectorDifferent = std::memcmp(
+                    deviceBuffer.data() + sectorOffset,
+                    imageBuffer.data() + sectorOffset,
+                    bytesInSector) != 0;
+                if (sectorDifferent)
+                {
+                    ++differentSectors;
+                    if (!previousSectorDifferent)
+                    {
+                        ++mismatchRanges;
+                    }
+                    for (std::size_t index = 0; index < bytesInSector; ++index)
+                    {
+                        if (deviceBuffer[sectorOffset + index] !=
+                            imageBuffer[sectorOffset + index])
+                        {
+                            ++differentBytes;
+                            if (firstDifferentOffset ==
+                                std::numeric_limits<std::uint64_t>::max())
+                            {
+                                firstDifferentOffset = offset + sectorOffset + index;
+                            }
+                        }
+                    }
+                }
+                previousSectorDifferent = sectorDifferent;
+            }
+
+            offset += requested;
+            const std::uint64_t completedMiB = offset / BytesPerMiB;
+            if (completedMiB >= nextProgressMiB || offset == device.Size())
+            {
+                std::wcout
+                    << L"Compared: " << completedMiB << L" / "
+                    << device.Size() / BytesPerMiB << L" MiB\n";
+                nextProgressMiB = completedMiB + 256;
+            }
+        }
+
+        std::cout << "Different sectors: " << differentSectors << '\n';
+        std::cout << "Mismatch ranges:   " << mismatchRanges << '\n';
+        std::cout << "Different bytes:   " << differentBytes << '\n';
+        if (firstDifferentOffset == std::numeric_limits<std::uint64_t>::max())
+        {
+            std::cout << "Result: device and E01 are identical.\n";
+        }
+        else
+        {
+            std::cout << "First difference:  " << firstDifferentOffset << " bytes\n";
+            std::cout << "Result: device and E01 differ.\n";
+        }
+        return differentBytes == 0 ? EXIT_SUCCESS : 4;
+    }
+
     int AcquirePhysicalDeviceE01(
         const int argumentCount,
         wchar_t* arguments[],
@@ -933,6 +1084,132 @@ namespace
         std::wcout << L"Output base:     " << arguments[4] << L'\n';
         return EXIT_SUCCESS;
     }
+
+    int ExportE01ToRaw(const int argumentCount, wchar_t* arguments[])
+    {
+        if (argumentCount != 4)
+        {
+            std::wcout
+                << L"Usage: DiskBackuper.Phase0.exe --export-e01 "
+                << L"<first-e01-segment> <output-raw-file>\n";
+            return EXIT_FAILURE;
+        }
+
+        std::error_code error;
+        diskbackuper::phase0::EwfBlockSource image(arguments[2]);
+        if (!image.Open(error))
+        {
+            PrintError("Open E01 image", error);
+            return EXIT_FAILURE;
+        }
+
+        const HANDLE output = CreateFileW(
+            arguments[3],
+            GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+            nullptr);
+        if (output == INVALID_HANDLE_VALUE)
+        {
+            PrintError(
+                "Create raw output",
+                {
+                    static_cast<int>(GetLastError()),
+                    std::system_category()
+                });
+            return EXIT_FAILURE;
+        }
+
+        constexpr std::size_t ExportBufferSize = 8ULL * BytesPerMiB;
+        std::vector<std::byte> buffer(ExportBufferSize);
+        std::uint64_t offset = 0;
+        std::uint64_t nextProgressMiB = 256;
+        bool succeeded = true;
+        while (offset < image.Size())
+        {
+            const std::size_t requested = static_cast<std::size_t>(
+                std::min<std::uint64_t>(buffer.size(), image.Size() - offset));
+            std::size_t bytesRead = 0;
+            if (!image.Read(
+                    offset,
+                    buffer.data(),
+                    requested,
+                    bytesRead,
+                    error) ||
+                bytesRead != requested)
+            {
+                PrintError("Read E01 for raw export", error);
+                succeeded = false;
+                break;
+            }
+
+            std::size_t bytesWritten = 0;
+            while (bytesWritten < bytesRead)
+            {
+                DWORD chunkWritten = 0;
+                const DWORD writeSize = static_cast<DWORD>(std::min<std::size_t>(
+                    bytesRead - bytesWritten,
+                    std::numeric_limits<DWORD>::max()));
+                if (!WriteFile(
+                        output,
+                        buffer.data() + bytesWritten,
+                        writeSize,
+                        &chunkWritten,
+                        nullptr) ||
+                    chunkWritten == 0)
+                {
+                    PrintError(
+                        "Write raw export",
+                        {
+                            static_cast<int>(GetLastError()),
+                            std::system_category()
+                        });
+                    succeeded = false;
+                    break;
+                }
+                bytesWritten += chunkWritten;
+            }
+            if (!succeeded)
+            {
+                break;
+            }
+
+            offset += bytesRead;
+            const std::uint64_t completedMiB = offset / BytesPerMiB;
+            if (completedMiB >= nextProgressMiB || offset == image.Size())
+            {
+                std::wcout
+                    << L"Exported: " << completedMiB << L" / "
+                    << image.Size() / BytesPerMiB << L" MiB\n";
+                nextProgressMiB = completedMiB + 256;
+            }
+        }
+
+        if (succeeded && !FlushFileBuffers(output))
+        {
+            PrintError(
+                "Flush raw export",
+                {
+                    static_cast<int>(GetLastError()),
+                    std::system_category()
+                });
+            succeeded = false;
+        }
+        CloseHandle(output);
+        image.Close();
+        if (!succeeded)
+        {
+            std::cerr << "The incomplete raw output was left in place for inspection.\n";
+            return EXIT_FAILURE;
+        }
+
+        std::wcout << L"Raw export completed successfully.\n";
+        std::wcout << L"Bytes: " << offset << L'\n';
+        std::wcout << L"Path:  " << arguments[3] << L'\n';
+        return EXIT_SUCCESS;
+    }
 }
 
 int wmain(const int argumentCount, wchar_t* arguments[])
@@ -977,6 +1254,12 @@ int wmain(const int argumentCount, wchar_t* arguments[])
     }
 
     if (argumentCount >= 2 &&
+        std::wcscmp(arguments[1], L"--compare-device-e01") == 0)
+    {
+        return ComparePhysicalDeviceWithE01(argumentCount, arguments);
+    }
+
+    if (argumentCount >= 2 &&
         std::wcscmp(arguments[1], L"--create-device-e01") == 0)
     {
         return AcquirePhysicalDeviceE01(argumentCount, arguments, false);
@@ -1010,6 +1293,12 @@ int wmain(const int argumentCount, wchar_t* arguments[])
         return SalvagePartialE01(argumentCount, arguments);
     }
 
+    if (argumentCount >= 2 &&
+        std::wcscmp(arguments[1], L"--export-e01") == 0)
+    {
+        return ExportE01ToRaw(argumentCount, arguments);
+    }
+
     if (argumentCount < 2 || argumentCount > 3)
     {
         std::wcout << L"Usage: DiskBackuper.Phase0.exe <source-file> [offset]\n";
@@ -1034,6 +1323,9 @@ int wmain(const int argumentCount, wchar_t* arguments[])
             << L"       DiskBackuper.Phase0.exe --hash-device "
             << L"<device-path> <expected-size-bytes>\n";
         std::wcout
+            << L"       DiskBackuper.Phase0.exe --compare-device-e01 "
+            << L"<device-path> <expected-size-bytes> <first-e01-segment>\n";
+        std::wcout
             << L"       DiskBackuper.Phase0.exe --create-device-e01 "
             << L"<device-path> <expected-size-bytes> <output-base> "
             << L"[segment-mib] [stop-after-mib]\n";
@@ -1051,6 +1343,9 @@ int wmain(const int argumentCount, wchar_t* arguments[])
             << L"       DiskBackuper.Phase0.exe --salvage-partial-e01 "
             << L"<checkpoint-base> <expected-original-size> "
             << L"<readable-output-base>\n";
+        std::wcout
+            << L"       DiskBackuper.Phase0.exe --export-e01 "
+            << L"<first-e01-segment> <output-raw-file>\n";
         return argumentCount < 2 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
