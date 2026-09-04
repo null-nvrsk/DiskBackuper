@@ -15,6 +15,12 @@
     <Filter Include="Header Files\vhdx">
       <UniqueIdentifier>{39341F37-64B3-4D23-9DB2-E25253BE6755}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\verify">
+      <UniqueIdentifier>{90313202-CC53-414E-9E74-46A80FB0C13F}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\verify">
+      <UniqueIdentifier>{AB5C5A07-230B-4ED1-B5AE-2D785AE69407}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -23,6 +29,9 @@
     <ClCompile Include="vhdx\WindowsVhdxWriter.cpp">
       <Filter>Source Files\vhdx</Filter>
     </ClCompile>
+    <ClCompile Include="verify\NormalCompletionVerifier.cpp">
+      <Filter>Source Files\verify</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="vhdx\IImageWriter.h">
@@ -30,6 +39,9 @@
     </ClInclude>
     <ClInclude Include="vhdx\WindowsVhdxWriter.h">
       <Filter>Header Files\vhdx</Filter>
+    </ClInclude>
+    <ClInclude Include="verify\NormalCompletionVerifier.h">
+      <Filter>Header Files\verify</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

@@ -75,9 +75,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="verify\NormalCompletionVerifier.cpp" />
     <ClCompile Include="vhdx\WindowsVhdxWriter.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="verify\NormalCompletionVerifier.h" />
     <ClInclude Include="vhdx\IImageWriter.h" />
     <ClInclude Include="vhdx\WindowsVhdxWriter.h" />
   </ItemGroup>

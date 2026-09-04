@@ -10,6 +10,11 @@
 
 #include <Windows.h>
 #include <virtdisk.h>
+#include <winioctl.h>
+
+#include <array>
+#include <algorithm>
+#include <limits>
 
 namespace diskbackuper::vhdx_phase0
 {
@@ -31,6 +36,19 @@ namespace diskbackuper::vhdx_phase0
                 static_cast<int>(errorCode),
                 std::system_category()
             };
+        }
+
+        bool IsAllZero(
+            const std::byte* const data,
+            const std::size_t size) noexcept
+        {
+            return std::all_of(
+                data,
+                data + size,
+                [](const std::byte value)
+                {
+                    return value == std::byte{0};
+                });
         }
 
         bool IsSupportedSectorSize(const std::uint32_t sectorSize) noexcept
@@ -160,33 +178,214 @@ namespace diskbackuper::vhdx_phase0
         }
 
         isAttached_ = true;
+
+        std::array<wchar_t, 256> physicalPathBuffer{};
+        ULONG physicalPathSizeInBytes = static_cast<ULONG>(
+            physicalPathBuffer.size() * sizeof(wchar_t));
+        const DWORD physicalPathResult = GetVirtualDiskPhysicalPath(
+            virtualDiskHandle,
+            &physicalPathSizeInBytes,
+            physicalPathBuffer.data());
+        if (physicalPathResult != ERROR_SUCCESS)
+        {
+            error = MakeWin32Error(physicalPathResult);
+            std::error_code ignoredCloseError;
+            Close(ignoredCloseError);
+            return false;
+        }
+
+        physicalPath_ = physicalPathBuffer.data();
+        if (physicalPath_.empty())
+        {
+            error = MakeWin32Error(ERROR_INVALID_DATA);
+            std::error_code ignoredCloseError;
+            Close(ignoredCloseError);
+            return false;
+        }
+
+        const HANDLE destinationDeviceHandle = CreateFileW(
+            physicalPath_.c_str(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS,
+            nullptr);
+        if (destinationDeviceHandle == INVALID_HANDLE_VALUE)
+        {
+            error = MakeWin32Error(GetLastError());
+            std::error_code ignoredCloseError;
+            Close(ignoredCloseError);
+            return false;
+        }
+
+        destinationDeviceHandle_ = destinationDeviceHandle;
+
+        GET_LENGTH_INFORMATION lengthInformation{};
+        DWORD bytesReturned = 0;
+        if (!DeviceIoControl(
+                destinationDeviceHandle,
+                IOCTL_DISK_GET_LENGTH_INFO,
+                nullptr,
+                0,
+                &lengthInformation,
+                sizeof(lengthInformation),
+                &bytesReturned,
+                nullptr))
+        {
+            error = MakeWin32Error(GetLastError());
+            std::error_code ignoredCloseError;
+            Close(ignoredCloseError);
+            return false;
+        }
+
+        if (lengthInformation.Length.QuadPart < 0 ||
+            static_cast<std::uint64_t>(lengthInformation.Length.QuadPart) !=
+                options.virtualDiskSize)
+        {
+            error = MakeWin32Error(ERROR_INVALID_DATA);
+            std::error_code ignoredCloseError;
+            Close(ignoredCloseError);
+            return false;
+        }
+
+        logicalSectorSize_ = options.logicalSectorSize;
+
         return true;
     }
 
     bool WindowsVhdxWriter::WriteAt(
-        const std::uint64_t,
-        const std::byte*,
-        const std::size_t,
+        const std::uint64_t offset,
+        const std::byte* const data,
+        const std::size_t size,
         std::error_code& error)
     {
-        error = IsOpen()
-            ? std::make_error_code(std::errc::function_not_supported)
-            : std::make_error_code(std::errc::bad_file_descriptor);
-        return false;
+        error.clear();
+
+        if (!IsOpen() ||
+            !isAttached_ ||
+            destinationDeviceHandle_ == nullptr ||
+            logicalSectorSize_ == 0)
+        {
+            error = std::make_error_code(std::errc::bad_file_descriptor);
+            return false;
+        }
+
+        if (offset > virtualDiskSize_ ||
+            size > virtualDiskSize_ - offset)
+        {
+            error = std::make_error_code(std::errc::value_too_large);
+            return false;
+        }
+
+        if (size == 0)
+        {
+            return true;
+        }
+
+        if (data == nullptr ||
+            offset % logicalSectorSize_ != 0 ||
+            size % logicalSectorSize_ != 0 ||
+            offset > static_cast<std::uint64_t>(
+                std::numeric_limits<LONGLONG>::max()))
+        {
+            error = std::make_error_code(std::errc::invalid_argument);
+            return false;
+        }
+
+        if (IsAllZero(data, size))
+        {
+            ++skippedZeroBlockCount_;
+            return true;
+        }
+
+        LARGE_INTEGER writeOffset{};
+        writeOffset.QuadPart = static_cast<LONGLONG>(offset);
+        if (!SetFilePointerEx(
+                static_cast<HANDLE>(destinationDeviceHandle_),
+                writeOffset,
+                nullptr,
+                FILE_BEGIN))
+        {
+            error = MakeWin32Error(GetLastError());
+            return false;
+        }
+
+        const std::uint64_t maximumWriteSize =
+            static_cast<std::uint64_t>(std::numeric_limits<DWORD>::max()) /
+            logicalSectorSize_ * logicalSectorSize_;
+        std::size_t totalBytesWritten = 0;
+        while (totalBytesWritten < size)
+        {
+            const DWORD writeSize = static_cast<DWORD>(
+                std::min<std::uint64_t>(
+                    size - totalBytesWritten,
+                    maximumWriteSize));
+            DWORD bytesWritten = 0;
+            if (!WriteFile(
+                    static_cast<HANDLE>(destinationDeviceHandle_),
+                    data + totalBytesWritten,
+                    writeSize,
+                    &bytesWritten,
+                    nullptr))
+            {
+                error = MakeWin32Error(GetLastError());
+                return false;
+            }
+
+            if (bytesWritten != writeSize)
+            {
+                error = MakeWin32Error(ERROR_WRITE_FAULT);
+                return false;
+            }
+
+            totalBytesWritten += bytesWritten;
+        }
+
+        return true;
     }
 
     bool WindowsVhdxWriter::Flush(std::error_code& error)
     {
-        error = IsOpen()
-            ? std::make_error_code(std::errc::function_not_supported)
-            : std::make_error_code(std::errc::bad_file_descriptor);
-        return false;
+        error.clear();
+
+        if (!IsOpen() || destinationDeviceHandle_ == nullptr)
+        {
+            error = std::make_error_code(std::errc::bad_file_descriptor);
+            return false;
+        }
+
+        if (!FlushFileBuffers(static_cast<HANDLE>(destinationDeviceHandle_)))
+        {
+            error = MakeWin32Error(GetLastError());
+            return false;
+        }
+
+        return true;
     }
 
     bool WindowsVhdxWriter::Close(std::error_code& error)
     {
         error.clear();
         std::error_code firstError;
+
+        if (destinationDeviceHandle_ != nullptr)
+        {
+            if (isOpen_ &&
+                !FlushFileBuffers(static_cast<HANDLE>(destinationDeviceHandle_)))
+            {
+                firstError = MakeWin32Error(GetLastError());
+            }
+
+            if (!CloseHandle(static_cast<HANDLE>(destinationDeviceHandle_)))
+            {
+                if (!firstError)
+                {
+                    firstError = MakeWin32Error(GetLastError());
+                }
+            }
+            destinationDeviceHandle_ = nullptr;
+        }
 
         if (isAttached_ && virtualDiskHandle_ != nullptr)
         {
@@ -196,7 +395,10 @@ namespace diskbackuper::vhdx_phase0
                 0);
             if (detachResult != ERROR_SUCCESS)
             {
-                firstError = MakeWin32Error(detachResult);
+                if (!firstError)
+                {
+                    firstError = MakeWin32Error(detachResult);
+                }
             }
             isAttached_ = false;
         }
@@ -214,7 +416,10 @@ namespace diskbackuper::vhdx_phase0
         }
 
         virtualDiskSize_ = 0;
+        skippedZeroBlockCount_ = 0;
+        logicalSectorSize_ = 0;
         isOpen_ = false;
+        physicalPath_.clear();
         error = firstError;
         return !error;
     }
@@ -232,5 +437,15 @@ namespace diskbackuper::vhdx_phase0
     bool WindowsVhdxWriter::IsAttached() const noexcept
     {
         return isAttached_;
+    }
+
+    std::wstring_view WindowsVhdxWriter::PhysicalPath() const noexcept
+    {
+        return physicalPath_;
+    }
+
+    std::uint64_t WindowsVhdxWriter::SkippedZeroBlockCount() const noexcept
+    {
+        return skippedZeroBlockCount_;
     }
 }
