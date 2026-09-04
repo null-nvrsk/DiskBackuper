@@ -196,8 +196,8 @@ namespace diskbackuper::phase0
 
         if (libewf_handle_set_compression_values(
                 handle,
-                LIBEWF_COMPRESSION_BEST,
-                LIBEWF_COMPRESS_FLAG_USE_EMPTY_BLOCK_COMPRESSION,
+                LIBEWF_COMPRESSION_FAST,
+                0,
                 &libewfError) != 1)
         {
             return setFailure("libewf_handle_set_compression_values");
@@ -541,14 +541,66 @@ namespace diskbackuper::phase0
             return true;
         }
 
+        if (bytesWritten_ == options_.sourceSize)
+        {
+            return Finalize(error);
+        }
+
+        if (options_.streamedMediaSize)
+        {
+            libewf_error_t* libewfError = nullptr;
+            if (libewf_handle_write_finalize(
+                    reinterpret_cast<libewf_handle_t*>(handle_),
+                    &libewfError) < 0)
+            {
+                SetLibewfFailure(
+                    lastErrorMessage_,
+                    "libewf_handle_write_finalize(streamed partial)",
+                    &libewfError,
+                    error);
+                return false;
+            }
+
+            isFinalized_ = true;
+            return true;
+        }
+
+        libewf_handle_t* const handle =
+            reinterpret_cast<libewf_handle_t*>(handle_);
         libewf_error_t* libewfError = nullptr;
+
+        // The first call writes a pending partial chunk. Stock libewf then
+        // returns without final tables because the declared media is larger.
         if (libewf_handle_write_finalize(
-                reinterpret_cast<libewf_handle_t*>(handle_),
+                handle,
                 &libewfError) < 0)
         {
             SetLibewfFailure(
                 lastErrorMessage_,
                 "libewf_handle_write_finalize(partial)",
+                &libewfError,
+                error);
+            return false;
+        }
+
+        if (libewf_handle_set_media_size(
+                handle,
+                bytesWritten_,
+                &libewfError) != 1)
+        {
+            SetLibewfFailure(
+                lastErrorMessage_,
+                "libewf_handle_set_media_size(seal partial)",
+                &libewfError,
+                error);
+            return false;
+        }
+
+        if (libewf_handle_write_finalize(handle, &libewfError) < 0)
+        {
+            SetLibewfFailure(
+                lastErrorMessage_,
+                "libewf_handle_write_finalize(seal partial)",
                 &libewfError,
                 error);
             return false;

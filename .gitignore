@@ -58,6 +58,7 @@ packages/
 *.nupkg
 vcpkg_installed/
 .deps/
+.build-temp/
 
 # Tests and profiling
 TestResults/

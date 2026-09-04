@@ -1,0 +1,111 @@
+diff --git a/libewf/libewf_handle.c b/libewf/libewf_handle.c
+--- a/libewf/libewf_handle.c
++++ b/libewf/libewf_handle.c
+@@ -7024,15 +7024,20 @@ ssize_t libewf_handle_write_finalize(
+ 		}
+ 		write_finalize_count += write_count;
+ 	}
+-	/* Correct the media values if streamed write was used
++	/* Correct the media values if streamed write was used or an ordinary
++	 * image was sealed at a shorter written prefix.
+ 	 */
+-	if( internal_handle->media_values->media_size == 0 )
++	if( ( internal_handle->media_values->media_size == 0 )
++	 || ( internal_handle->write_io_handle->finalize_with_media_size_correction != 0 ) )
+ 	{
+-		/* Determine the media values
+-		 */
+-		internal_handle->media_values->number_of_chunks  = internal_handle->write_io_handle->number_of_chunks_written;
+-		internal_handle->media_values->number_of_sectors = (uint64_t) ( internal_handle->write_io_handle->input_write_count / internal_handle->media_values->bytes_per_sector );
+-		internal_handle->media_values->media_size        = (size64_t) internal_handle->write_io_handle->input_write_count;
++		if( internal_handle->media_values->media_size == 0 )
++		{
++			/* Determine the media values.
++			 */
++			internal_handle->media_values->number_of_chunks  = internal_handle->write_io_handle->number_of_chunks_written;
++			internal_handle->media_values->number_of_sectors = (uint64_t) ( internal_handle->write_io_handle->input_write_count / internal_handle->media_values->bytes_per_sector );
++			internal_handle->media_values->media_size        = (size64_t) internal_handle->write_io_handle->input_write_count;
++		}
+ 
+ 		/* Flush the data section write cache
+ 		 */
+@@ -7068,6 +7073,7 @@ ssize_t libewf_handle_write_finalize(
+ 
+ 			return( -1 );
+ 		}
++		internal_handle->write_io_handle->finalize_with_media_size_correction = 0;
+ 	}
+ 	internal_handle->write_io_handle->write_finalized = 1;
+ 
+diff --git a/libewf/libewf_metadata.c b/libewf/libewf_metadata.c
+--- a/libewf/libewf_metadata.c
++++ b/libewf/libewf_metadata.c
+@@ -754,9 +754,50 @@ int libewf_handle_set_media_size(
+ 
+ 		return( -1 );
+ 	}
+-	if( ( internal_handle->read_io_handle != NULL )
+-	 || ( internal_handle->write_io_handle == NULL )
+-	 || ( internal_handle->write_io_handle->values_initialized != 0 ) )
++	if( internal_handle->write_io_handle == NULL )
++	{
++		libcerror_error_set(
++		 error,
++		 LIBCERROR_ERROR_DOMAIN_RUNTIME,
++		 LIBCERROR_RUNTIME_ERROR_SET_FAILED,
++		 "%s: media size cannot be changed.",
++		 function );
++
++		return( -1 );
++	}
++	if( internal_handle->write_io_handle->values_initialized != 0 )
++	{
++		/* DiskBackuper extension: allow an active write to be sealed at the
++		 * exact, sector-aligned prefix that has already reached EWF chunks.
++		 * Arbitrary media-size changes remain prohibited.
++		 */
++		if( ( internal_handle->write_io_handle->write_finalized != 0 )
++		 || ( internal_handle->media_values->media_size == 0 )
++		 || ( media_size == 0 )
++		 || ( media_size >= internal_handle->media_values->media_size )
++		 || ( media_size != (size64_t) internal_handle->write_io_handle->input_write_count )
++		 || ( internal_handle->media_values->bytes_per_sector == 0 )
++		 || ( ( media_size % internal_handle->media_values->bytes_per_sector ) != 0 ) )
++		{
++			libcerror_error_set(
++			 error,
++			 LIBCERROR_ERROR_DOMAIN_RUNTIME,
++			 LIBCERROR_RUNTIME_ERROR_SET_FAILED,
++			 "%s: initialized media size can only be reduced to the written sector-aligned prefix.",
++			 function );
++
++			return( -1 );
++		}
++		internal_handle->media_values->media_size        = media_size;
++		internal_handle->media_values->number_of_sectors =
++			(uint64_t) ( media_size / internal_handle->media_values->bytes_per_sector );
++		internal_handle->media_values->number_of_chunks  =
++			internal_handle->write_io_handle->number_of_chunks_written;
++		internal_handle->write_io_handle->finalize_with_media_size_correction = 1;
++
++		return( 1 );
++	}
++	if( internal_handle->read_io_handle != NULL )
+ 	{
+ 		libcerror_error_set(
+ 		 error,
+diff --git a/libewf/libewf_write_io_handle.h b/libewf/libewf_write_io_handle.h
+--- a/libewf/libewf_write_io_handle.h
++++ b/libewf/libewf_write_io_handle.h
+@@ -130,6 +130,11 @@ struct libewf_write_io_handle
+ 	 */
+ 	uint8_t write_finalized;
+ 
++	/* Value to indicate the media size was reduced to the written prefix
++	 * and the segment metadata must be corrected during finalization.
++	 */
++	uint8_t finalize_with_media_size_correction;
++
+ 	/* The compressed zero byte empty block
+ 	 */
+ 	uint8_t *compressed_zero_byte_empty_block;

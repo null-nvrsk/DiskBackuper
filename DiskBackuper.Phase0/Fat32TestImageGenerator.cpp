@@ -14,6 +14,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string_view>
@@ -33,6 +34,9 @@ namespace diskbackuper::phase0
         constexpr std::uint32_t EndOfChain = 0x0fffffffU;
         constexpr std::size_t RandomFileSize = 1024ULL * 1024ULL;
         constexpr std::size_t ZeroFileSize = 2ULL * 1024ULL * 1024ULL;
+        constexpr std::uint32_t TestImageCount = 100;
+        constexpr std::uint32_t TestImageWidth = 512;
+        constexpr std::uint32_t TestImageHeight = 320;
         constexpr std::uint64_t RandomSeed = 0xF032D15CBAC0FFEEULL;
 
         struct Allocation
@@ -194,6 +198,48 @@ namespace diskbackuper::phase0
             }
             return data;
         }
+
+        std::vector<std::byte> MakeTestBitmap(const std::uint32_t imageIndex)
+        {
+            constexpr std::uint32_t bitmapHeaderSize = 54;
+            constexpr std::uint32_t rowSize =
+                ((TestImageWidth * 3U) + 3U) & ~3U;
+            constexpr std::uint32_t pixelDataSize = rowSize * TestImageHeight;
+            constexpr std::uint32_t fileSize = bitmapHeaderSize + pixelDataSize;
+
+            std::vector<std::byte> bitmap(fileSize, std::byte{ 0 });
+            bitmap[0] = std::byte{ 'B' };
+            bitmap[1] = std::byte{ 'M' };
+            Put32(bitmap.data(), 2, fileSize);
+            Put32(bitmap.data(), 10, bitmapHeaderSize);
+            Put32(bitmap.data(), 14, 40);
+            Put32(bitmap.data(), 18, TestImageWidth);
+            Put32(bitmap.data(), 22, TestImageHeight);
+            Put16(bitmap.data(), 26, 1);
+            Put16(bitmap.data(), 28, 24);
+            Put32(bitmap.data(), 34, pixelDataSize);
+            Put32(bitmap.data(), 38, 2835);
+            Put32(bitmap.data(), 42, 2835);
+
+            for (std::uint32_t y = 0; y < TestImageHeight; ++y)
+            {
+                std::byte* const row = bitmap.data() + bitmapHeaderSize +
+                    static_cast<std::size_t>(y) * rowSize;
+                for (std::uint32_t x = 0; x < TestImageWidth; ++x)
+                {
+                    const std::uint32_t noise =
+                        (x * 1103515245U) ^ (y * 2654435761U) ^
+                        (imageIndex * 2246822519U);
+                    row[x * 3U] = static_cast<std::byte>(
+                        (x + imageIndex * 17U + (noise >> 16U)) & 0xffU);
+                    row[x * 3U + 1U] = static_cast<std::byte>(
+                        (y * 2U + imageIndex * 29U + (noise >> 8U)) & 0xffU);
+                    row[x * 3U + 2U] = static_cast<std::byte>(
+                        (x + y + imageIndex * 43U + noise) & 0xffU);
+                }
+            }
+            return bitmap;
+        }
     }
 
     bool Fat32TestImageGenerator::Create(
@@ -295,6 +341,7 @@ namespace diskbackuper::phase0
         Allocation zeros;
         Allocation docsDirectory;
         Allocation recovered;
+        std::vector<Allocation> testImages(TestImageCount);
         if (!allocate(readmeText.size(), readme) ||
             !allocate(markerText.size(), marker) ||
             !allocate(RandomFileSize, random) ||
@@ -304,6 +351,15 @@ namespace diskbackuper::phase0
         {
             error = std::make_error_code(std::errc::no_space_on_device);
             return false;
+        }
+        const std::size_t testImageSize = MakeTestBitmap(0).size();
+        for (Allocation& testImage : testImages)
+        {
+            if (!allocate(testImageSize, testImage))
+            {
+                error = std::make_error_code(std::errc::no_space_on_device);
+                return false;
+            }
         }
 
         const HANDLE handle = CreateFileW(
@@ -442,6 +498,23 @@ namespace diskbackuper::phase0
             rootDirectory,
             MakeDirectoryEntry("DOCS       ", 0x10, docsDirectory.firstCluster, 0),
             rootPosition);
+        for (std::uint32_t index = 0; index < TestImageCount; ++index)
+        {
+            std::array<char, 12> shortName{};
+            std::snprintf(
+                shortName.data(),
+                shortName.size(),
+                "PIC%05uBMP",
+                index + 1U);
+            AppendDirectoryEntry(
+                rootDirectory,
+                MakeDirectoryEntry(
+                    std::string_view(shortName.data(), 11),
+                    0x20,
+                    testImages[index].firstCluster,
+                    static_cast<std::uint32_t>(testImageSize)),
+                rootPosition);
+        }
 
         std::vector<std::byte> docsData(clusterSize, std::byte{ 0 });
         std::size_t docsPosition = 0;
@@ -489,6 +562,14 @@ namespace diskbackuper::phase0
         // ZEROS.BIN is represented by allocated clusters that remain zero-filled.
         writeContent(docsDirectory, docsData.data(), docsData.size());
         writeContent(recovered, recoveredText.data(), recoveredText.size());
+        for (std::uint32_t index = 0; index < TestImageCount; ++index)
+        {
+            const std::vector<std::byte> bitmap = MakeTestBitmap(index);
+            writeContent(
+                testImages[index],
+                bitmap.data(),
+                bitmap.size());
+        }
 
         if (success && !FlushFileBuffers(handle))
         {
@@ -508,7 +589,7 @@ namespace diskbackuper::phase0
         layout.partitionOffset = partitionOffset;
         layout.partitionSize = static_cast<std::uint64_t>(partitionSectors) * BytesPerSector;
         layout.clusterSize = clusterSize;
-        layout.fileCount = 5;
+        layout.fileCount = 5 + TestImageCount;
         return true;
     }
 }

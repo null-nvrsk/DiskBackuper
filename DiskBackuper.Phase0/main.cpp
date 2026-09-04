@@ -361,29 +361,10 @@ namespace
             source->Close();
             PrintError("Acquire source", sourceError);
             std::wcout
-                << (survivablePartial
-                    ? L"A readable truncated E01 was finalized after source loss.\n"
-                    : L"The partial E01 checkpoint was preserved after source loss.\n");
+                << L"A readable truncated E01 was sealed after source loss.\n";
             std::wcout << L"Resume offset: " << pauseOffset << L" bytes\n";
-            if (survivablePartial)
-            {
-                std::wcout
-                    << L"The image contains only the captured prefix and is not resumable.\n";
-            }
-            else if (!resumeCommandOverride.empty())
-            {
-                std::wcout << L"Reconnect the same device, then continue with: "
-                           << resumeCommandOverride << L'\n';
-            }
-            else
-            {
-                std::wcout
-                    << L"Continue with: DiskBackuper.Phase0.exe --resume-e01 \""
-                    << arguments[2]
-                    << L"\" \""
-                    << arguments[3]
-                    << L"\"\n";
-            }
+            std::wcout
+                << L"The image contains only the captured prefix and is not resumable.\n";
             return SourceUnavailableExitCode;
         }
 
@@ -400,28 +381,10 @@ namespace
             writer.Close();
             source->Close();
             std::wcout
-                << (survivablePartial
-                    ? L"Readable truncated E01 finalized safely.\n"
-                    : L"E01 acquisition paused safely.\n");
+                << L"Readable truncated E01 sealed safely.\n";
             std::wcout << L"Resume offset: " << pauseOffset << L" bytes\n";
-            if (survivablePartial)
-            {
-                std::wcout
-                    << L"The image contains only the captured prefix and is not resumable.\n";
-            }
-            else if (!resumeCommandOverride.empty())
-            {
-                std::wcout << L"Continue with: " << resumeCommandOverride << L'\n';
-            }
-            else
-            {
-                std::wcout
-                    << L"Continue with: DiskBackuper.Phase0.exe --resume-e01 \""
-                    << arguments[2]
-                    << L"\" \""
-                    << arguments[3]
-                    << L"\"\n";
-            }
+            std::wcout
+                << L"The image contains only the captured prefix and is not resumable.\n";
             return AcquisitionPausedExitCode;
         }
 
