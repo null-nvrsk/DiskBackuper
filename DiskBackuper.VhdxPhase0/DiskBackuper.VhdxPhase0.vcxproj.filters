@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{E1F164B0-2E94-4DA2-9A9B-B8D9CB798AAA}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{0F2292BF-39BA-44A4-8AF0-28E14F4BB571}</UniqueIdentifier>
+      <Extensions>h;hpp;hxx</Extensions>
+    </Filter>
+    <Filter Include="Source Files\vhdx">
+      <UniqueIdentifier>{EF01BD9B-AC14-4022-9509-F2E6F24AA7C3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\vhdx">
+      <UniqueIdentifier>{39341F37-64B3-4D23-9DB2-E25253BE6755}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vhdx\WindowsVhdxWriter.cpp">
+      <Filter>Source Files\vhdx</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="vhdx\IImageWriter.h">
+      <Filter>Header Files\vhdx</Filter>
+    </ClInclude>
+    <ClInclude Include="vhdx\WindowsVhdxWriter.h">
+      <Filter>Header Files\vhdx</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
