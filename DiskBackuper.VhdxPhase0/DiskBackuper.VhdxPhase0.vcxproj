@@ -48,6 +48,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -64,6 +65,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -75,13 +77,26 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="test\CrashController.cpp" />
     <ClCompile Include="verify\NormalCompletionVerifier.cpp" />
+    <ClCompile Include="verify\VhdxLogInspector.cpp" />
     <ClCompile Include="vhdx\WindowsVhdxWriter.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="test\CrashController.h" />
     <ClInclude Include="verify\NormalCompletionVerifier.h" />
+    <ClInclude Include="verify\VhdxLogInspector.h" />
     <ClInclude Include="vhdx\IImageWriter.h" />
     <ClInclude Include="vhdx\WindowsVhdxWriter.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="scripts\Invoke-VmPowerLossWorker.ps1" />
+    <None Include="scripts\New-DiskBackuperTestVm.ps1" />
+    <None Include="scripts\Test-GracefulInterruption.ps1" />
+    <None Include="scripts\Test-HardCrash.ps1" />
+    <None Include="scripts\Test-NormalCompletion.ps1" />
+    <None Include="scripts\Test-VhdxLogReplay.ps1" />
+    <None Include="scripts\Test-VmPowerLoss.ps1" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

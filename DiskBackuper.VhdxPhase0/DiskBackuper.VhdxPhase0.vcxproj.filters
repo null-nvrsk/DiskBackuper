@@ -21,6 +21,15 @@
     <Filter Include="Header Files\verify">
       <UniqueIdentifier>{AB5C5A07-230B-4ED1-B5AE-2D785AE69407}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\test">
+      <UniqueIdentifier>{F9C89195-1E53-4764-AB31-6C5929CA68E0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\test">
+      <UniqueIdentifier>{9B3EFB7F-3F0D-4505-B8EC-D873F4C91A34}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Scripts">
+      <UniqueIdentifier>{610963D8-28B2-4F14-9A78-5BB819C684B3}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -30,6 +39,12 @@
       <Filter>Source Files\vhdx</Filter>
     </ClCompile>
     <ClCompile Include="verify\NormalCompletionVerifier.cpp">
+      <Filter>Source Files\verify</Filter>
+    </ClCompile>
+    <ClCompile Include="test\CrashController.cpp">
+      <Filter>Source Files\test</Filter>
+    </ClCompile>
+    <ClCompile Include="verify\VhdxLogInspector.cpp">
       <Filter>Source Files\verify</Filter>
     </ClCompile>
   </ItemGroup>
@@ -43,5 +58,34 @@
     <ClInclude Include="verify\NormalCompletionVerifier.h">
       <Filter>Header Files\verify</Filter>
     </ClInclude>
+    <ClInclude Include="test\CrashController.h">
+      <Filter>Header Files\test</Filter>
+    </ClInclude>
+    <ClInclude Include="verify\VhdxLogInspector.h">
+      <Filter>Header Files\verify</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="scripts\Invoke-VmPowerLossWorker.ps1">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="scripts\New-DiskBackuperTestVm.ps1">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="scripts\Test-GracefulInterruption.ps1">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="scripts\Test-HardCrash.ps1">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="scripts\Test-NormalCompletion.ps1">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="scripts\Test-VhdxLogReplay.ps1">
+      <Filter>Scripts</Filter>
+    </None>
+    <None Include="scripts\Test-VmPowerLoss.ps1">
+      <Filter>Scripts</Filter>
+    </None>
   </ItemGroup>
 </Project>
